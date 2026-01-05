@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Board: Vibe Coding</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel (JSX 변환용) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        /* Custom Scrollbar for Vibe */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        body { background-color: #111827; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Main Logic -->
+    <script type="text/babel" data-type="module">
+        // Firebase Modular SDK Imports (CDN)
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            onAuthStateChanged, 
+            signInWithCustomToken 
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            doc, 
+            setDoc, 
+            addDoc,
+            onSnapshot, 
+            query, 
+            orderBy, 
+            serverTimestamp 
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // --- ICON COMPONENTS (Inline SVG replacement for lucide-react) ---
+        const Icon = ({ path, className, ...props }) => (
+            <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                className={className} 
+                {...props}
+            >
+                {path}
+            </svg>
+        );
+
+        const Icons = {
+            Pencil: (p) => <Icon path={<><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></>} {...p} />,
+            Eraser: (p) => <Icon path={<><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></>} {...p} />,
+            MessageSquare: (p) => <Icon path={<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>} {...p} />,
+            Send: (p) => <Icon path={<><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></>} {...p} />,
+            Users: (p) => <Icon path={<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>} {...p} />,
+            UserCircle: (p) => <Icon path={<><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/></>} {...p} />,
+            X: (p) => <Icon path={<><path d="M18 6 6 18"/><path d="m6 6 18 18"/></>} {...p} />,
+            LayoutDashboard: (p) => <Icon path={<><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></>} {...p} />,
+            ArrowLeft: (p) => <Icon path={<><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></>} {...p} />,
+            HelpCircle: (p) => <Icon path={<><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></>} {...p} />,
+            CheckCircle2: (p) => <Icon path={<><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></>} {...p} />,
+            Clock: (p) => <Icon path={<><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>} {...p} />,
+            LogIn: (p) => <Icon path={<><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></>} {...p} />
+        };
+
+        // --- FIREBASE CONFIGURATION ---
+        const MY_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyDK2VURk2eqaRy52yi2sPZuwYVb2ymmR3I",
+            authDomain: "eboard-95055.firebaseapp.com",
+            projectId: "eboard-95055",
+            storageBucket: "eboard-95055.firebasestorage.app",
+            messagingSenderId: "927523134440",
+            appId: "1:927523134440:web:4a546e6c565368e283e25d"
+        };
+
+        // --- APP INITIALIZATION ---
+        const app = initializeApp(MY_FIREBASE_CONFIG);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const APP_CONTEXT = MY_FIREBASE_CONFIG.projectId;
+        const DATA_ROOT = ['artifacts', APP_CONTEXT, 'public', 'data'];
+        const COLS = { STROKES: 'strokes', MESSAGES: 'messages', USERS: 'users' };
+
+        // --- REACT COMPONENTS ---
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        const StatCard = ({ icon, label, value, color }) => (
+            <div className="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-lg">
+                <div className="flex items-center gap-3 mb-2">
+                    <div className={`p-2 bg-${color}-500/20 rounded-lg`}>{icon}</div>
+                    <h3 className="text-gray-400 font-medium">{label}</h3>
+                </div>
+                <p className="text-3xl font-bold text-white">{value}</p>
+            </div>
+        );
+
+        const InstructorDashboard = ({ messages, strokes, allUsers, onBack }) => {
+            const questions = useMemo(() => messages.filter(m => m.text.includes('?')), [messages]);
+            const participation = useMemo(() => {
+                const counts = {};
+                messages.forEach(m => { counts[m.userName] = (counts[m.userName] || 0) + 1; });
+                return counts;
+            }, [messages]);
+
+            return (
+                <div className="flex flex-col h-screen bg-gray-900 text-white font-sans overflow-y-auto">
+                    <header className="flex items-center justify-between px-6 py-4 bg-gray-800 border-b border-gray-700 sticky top-0 z-10">
+                        <div className="flex items-center gap-4">
+                            <button onClick={onBack} className="p-2 hover:bg-gray-700 rounded-full transition text-gray-400 hover:text-white">
+                                <Icons.ArrowLeft className="w-6 h-6" />
+                            </button>
+                            <div>
+                                <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-400">E-BOARD DASHBOARD</h1>
+                                <p className="text-sm text-gray-400">Instructor Control Center</p>
+                            </div>
+                        </div>
+                    </header>
+                    <div className="p-6 max-w-7xl mx-auto w-full space-y-8">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <StatCard icon={<Icons.Users className="text-purple-400"/>} label="Live Users" value={allUsers.length} color="purple" />
+                            <StatCard icon={<Icons.HelpCircle className="text-pink-400"/>} label="Questions" value={questions.length} color="pink" />
+                            <StatCard icon={<Icons.MessageSquare className="text-blue-400"/>} label="Total Msgs" value={messages.length} color="blue" />
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div className="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg p-5">
+                                <h2 className="text-lg font-bold text-purple-400 mb-4 flex items-center gap-2"><Icons.CheckCircle2 className="w-5 h-5" /> Attendance List</h2>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                    {allUsers.map((u) => (
+                                        <div key={u.id} className="flex justify-between px-3 py-2 bg-gray-700/50 rounded-lg border border-gray-600/50">
+                                            <span className="text-sm text-gray-200 truncate">{u.name}</span>
+                                            {participation[u.name] > 0 && <span className="text-xs bg-purple-500/20 text-purple-300 px-1 rounded">{participation[u.name]}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg flex flex-col h-[500px]">
+                                <div className="p-5 border-b border-gray-700 bg-gray-800/50">
+                                    <h2 className="text-lg font-bold text-pink-400 flex items-center gap-2"><Icons.HelpCircle className="w-5 h-5" /> Q&A Feed</h2>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                    {questions.map((msg, i) => (
+                                        <div key={i} className="bg-gray-900/50 p-4 rounded-xl border border-gray-700/50">
+                                            <div className="flex justify-between mb-2">
+                                                <span className="text-pink-300 text-sm font-semibold">{msg.userName}</span>
+                                                <span className="text-gray-500 text-xs flex items-center">
+                                                    <Icons.Clock className="w-3 h-3 mr-1"/>
+                                                    {msg.timestamp?.seconds ? new Date(msg.timestamp.seconds*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : ''}
+                                                </span>
+                                            </div>
+                                            <p className="text-gray-200">{msg.text}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const EBoard = () => {
+            const [viewMode, setViewMode] = useState('board');
+            const [user, setUser] = useState(null);
+            const [displayName, setDisplayName] = useState('');
+            const [isGateOpen, setIsGateOpen] = useState(true);
+            const [data, setData] = useState({ strokes: [], messages: [], users: [] });
+            const [ui, setUi] = useState({ color: '#00ffcc', width: 3, sidebar: true, msg: '' });
+            
+            const canvasRef = useRef(null);
+            const containerRef = useRef(null);
+            const drawing = useRef({ isDrawing: false, points: [] });
+
+            useEffect(() => {
+                const authFlow = async () => {
+                    await signInAnonymously(auth);
+                };
+                authFlow();
+                return onAuthStateChanged(auth, u => {
+                    setUser(u);
+                    const saved = localStorage.getItem(`eboard_user_${APP_CONTEXT}`);
+                    if (saved) { setDisplayName(saved); setIsGateOpen(false); }
+                });
+            }, []);
+
+            useEffect(() => {
+                if (!user) return;
+                const subs = [
+                    onSnapshot(query(collection(db, ...DATA_ROOT, COLS.STROKES), orderBy('timestamp', 'asc')), s => setData(p => ({...p, strokes: s.docs.map(d => d.data())}))),
+                    onSnapshot(query(collection(db, ...DATA_ROOT, COLS.MESSAGES), orderBy('timestamp', 'asc')), s => setData(p => ({...p, messages: s.docs.map(d => ({id:d.id, ...d.data()}))}))),
+                    onSnapshot(query(collection(db, ...DATA_ROOT, COLS.USERS), orderBy('joinedAt', 'desc')), s => setData(p => ({...p, users: s.docs.map(d => ({id:d.id, ...d.data()}))})))
+                ];
+                return () => subs.forEach(unsub => unsub());
+            }, [user]);
+
+            const redraw = useCallback(() => {
+                const ctx = canvasRef.current?.getContext('2d');
+                if (!ctx) return;
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                data.strokes.forEach(s => {
+                    if (!s.points?.length) return;
+                    ctx.beginPath(); ctx.lineCap='round'; ctx.lineJoin='round'; 
+                    ctx.strokeStyle=s.color; ctx.lineWidth=s.width;
+                    ctx.moveTo(s.points[0].x * ctx.canvas.width, s.points[0].y * ctx.canvas.height);
+                    s.points.slice(1).forEach(p => ctx.lineTo(p.x * ctx.canvas.width, p.y * ctx.canvas.height));
+                    ctx.stroke();
+                });
+            }, [data.strokes]);
+
+            useEffect(() => { if(viewMode === 'board') redraw(); }, [redraw, viewMode]);
+            
+            useEffect(() => {
+                if (viewMode !== 'board') return;
+                const resize = () => {
+                    if (!containerRef.current || !canvasRef.current) return;
+                    const { width, height } = containerRef.current.getBoundingClientRect();
+                    const dpr = window.devicePixelRatio || 1;
+                    canvasRef.current.width = width * dpr; canvasRef.current.height = height * dpr;
+                    canvasRef.current.getContext('2d').scale(dpr, dpr);
+                    canvasRef.current.style.width = `${width}px`; canvasRef.current.style.height = `${height}px`;
+                    redraw();
+                };
+                window.addEventListener('resize', resize); setTimeout(resize, 100);
+                return () => window.removeEventListener('resize', resize);
+            }, [redraw, viewMode]);
+
+            const handleJoin = async (e) => {
+                e.preventDefault();
+                const name = e.target.elements.name.value.trim();
+                if (!name || !user) return;
+                setDisplayName(name); setIsGateOpen(false);
+                localStorage.setItem(`eboard_user_${APP_CONTEXT}`, name);
+                await setDoc(doc(db, ...DATA_ROOT, COLS.USERS, user.uid), { name, uid: user.uid, joinedAt: serverTimestamp() }, { merge: true });
+            };
+
+            const drawStart = e => {
+                if(isGateOpen) return;
+                e.preventDefault();
+                const rect = canvasRef.current.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                drawing.current = { isDrawing: true, points: [{ x: (clientX - rect.left)/rect.width, y: (clientY - rect.top)/rect.height }] };
+            };
+
+            const drawMove = e => {
+                if(!drawing.current.isDrawing) return;
+                e.preventDefault();
+                const rect = canvasRef.current.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                const p = { x: (clientX - rect.left)/rect.width, y: (clientY - rect.top)/rect.height };
+                drawing.current.points.push(p);
+                
+                const ctx = canvasRef.current.getContext('2d');
+                const w = canvasRef.current.width / (window.devicePixelRatio||1);
+                const h = canvasRef.current.height / (window.devicePixelRatio||1);
+                const pts = drawing.current.points;
+                if(pts.length > 1) {
+                    ctx.beginPath(); ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle=ui.color; ctx.lineWidth=ui.width;
+                    ctx.moveTo(pts[pts.length-2].x*w, pts[pts.length-2].y*h);
+                    ctx.lineTo(p.x*w, p.y*h); ctx.stroke();
+                }
+            };
+
+            const drawEnd = async () => {
+                if(!drawing.current.isDrawing) return;
+                drawing.current.isDrawing = false;
+                if(drawing.current.points.length > 0) {
+                    await addDoc(collection(db, ...DATA_ROOT, COLS.STROKES), {
+                        points: drawing.current.points, color: ui.color, width: ui.width,
+                        userId: user.uid, author: displayName, timestamp: serverTimestamp()
+                    });
+                }
+            };
+
+            const sendMsg = async (e) => {
+                e.preventDefault();
+                if(!ui.msg.trim()) return;
+                await addDoc(collection(db, ...DATA_ROOT, COLS.MESSAGES), {
+                    text: ui.msg, userId: user.uid, userName: displayName, timestamp: serverTimestamp()
+                });
+                setUi(p => ({...p, msg: ''}));
+            };
+
+            if (viewMode === 'dashboard') return <InstructorDashboard messages={data.messages} strokes={data.strokes} allUsers={data.users} onBack={() => setViewMode('board')} />;
+
+            return (
+                <div className="flex flex-col h-screen bg-gray-900 text-white font-sans overflow-hidden">
+                    {isGateOpen && (
+                        <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center p-4">
+                            <div className="bg-gray-800 border border-gray-700 p-8 rounded-2xl w-full max-w-sm shadow-2xl text-center">
+                                <Icons.LogIn className="w-12 h-12 text-purple-400 mx-auto mb-4" />
+                                <h1 className="text-2xl font-bold mb-6">Ecobio Board ACCESS</h1>
+                                <form onSubmit={handleJoin} className="space-y-4">
+                                    <input name="name" type="text" placeholder="Enter Nickname" className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white focus:border-purple-500 outline-none" autoFocus />
+                                    <button type="submit" className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-lg transition">JOIN CLASS</button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    <header className="flex justify-between px-4 py-3 bg-gray-800 border-b border-gray-700 z-10">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-purple-500/20 p-1.5 rounded"><Icons.Pencil className="w-4 h-4 text-purple-400"/></div>
+                            <span className="font-bold">E-BOARD</span>
+                            {displayName && <span className="text-xs px-2 py-1 bg-gray-700 rounded text-gray-300">{displayName}</span>}
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => setViewMode('dashboard')} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 rounded-lg text-sm hover:bg-gray-600">
+                                <Icons.LayoutDashboard className="w-4 h-4"/><span className="hidden sm:inline">Dashboard</span>
+                            </button>
+                            <button onClick={() => setUi(p => ({...p, sidebar: !p.sidebar}))} className="p-2 bg-gray-700 rounded-lg hover:bg-gray-600">
+                                <Icons.MessageSquare className="w-5 h-5"/>
+                            </button>
+                        </div>
+                    </header>
+
+                    <div className="flex flex-1 relative overflow-hidden">
+                        <div className="flex-1 flex flex-col relative bg-gray-900">
+                            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-800/90 border border-gray-600 rounded-full px-4 py-2 flex items-center gap-4 shadow-lg z-20">
+                                <div className="flex gap-2 pr-4 border-r border-gray-600">
+                                    {['#00ffcc', '#ff00ff', '#ffff00', '#ffffff'].map(c => (
+                                        <button key={c} onClick={() => setUi(p => ({...p, color: c}))} className={`w-6 h-6 rounded-full border border-gray-600 ${ui.color === c ? 'ring-2 ring-white scale-110' : ''}`} style={{backgroundColor: c}} />
+                                    ))}
+                                </div>
+                                <input type="range" min="1" max="20" value={ui.width} onChange={e => setUi(p => ({...p, width: parseInt(e.target.value)}))} className="w-16 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer" />
+                                <button onClick={() => setData(p => ({...p, strokes: []}))} className="text-gray-400 hover:text-red-400"><Icons.Eraser className="w-4 h-4"/></button>
+                            </div>
+                            <div ref={containerRef} className="flex-1 w-full h-full cursor-crosshair touch-none">
+                                <canvas ref={canvasRef} onMouseDown={drawStart} onMouseMove={drawMove} onMouseUp={drawEnd} onMouseLeave={drawEnd} onTouchStart={drawStart} onTouchMove={drawMove} onTouchEnd={drawEnd} className="block" />
+                            </div>
+                        </div>
+
+                        <div className={`${ui.sidebar ? 'w-80 translate-x-0' : 'w-0 translate-x-full'} transition-all duration-300 bg-gray-800 border-l border-gray-700 flex flex-col fixed md:relative right-0 h-full z-30`}>
+                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                {data.messages.map(msg => (
+                                    <div key={msg.id} className={`flex flex-col ${msg.userId === user?.uid ? 'items-end' : 'items-start'}`}>
+                                        <span className="text-[10px] text-gray-400 mb-1 px-1">{msg.userName}</span>
+                                        <div className={`max-w-[85%] px-3 py-2 text-sm rounded-2xl ${msg.userId === user?.uid ? 'bg-purple-600 text-white rounded-br-none' : 'bg-gray-700 text-gray-200 rounded-bl-none'}`}>{msg.text}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            <form onSubmit={sendMsg} className="p-3 bg-gray-900 border-t border-gray-700 flex gap-2">
+                                <input type="text" value={ui.msg} onChange={e => setUi(p => ({...p, msg: e.target.value}))} placeholder="Chat..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-purple-500" />
+                                <button type="submit" disabled={!ui.msg.trim()} className="p-2 bg-purple-600 rounded-lg text-white hover:bg-purple-500 disabled:opacity-50"><Icons.Send className="w-4 h-4"/></button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<EBoard />);
+    </script>
+</body>
+</html>
