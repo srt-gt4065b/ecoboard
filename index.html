@@ -32,6 +32,7 @@
             padding: 2px;
             font-family: sans-serif;
             z-index: 50;
+            white-space: nowrap;
         }
     </style>
 </head>
@@ -43,11 +44,24 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, writeBatch, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+        const { useState, useEffect, useRef, useCallback } = React;
 
-        // --- Firebase Constants ---
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-eboard';
+        // --- Firebase Configuration (User Provided) ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDK2VURk2eqaRy52yi2sPZuwYVb2ymmR3I",
+            authDomain: "eboard-95055.firebaseapp.com",
+            databaseURL: "https://eboard-95055-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "eboard-95055",
+            storageBucket: "eboard-95055.firebasestorage.app",
+            messagingSenderId: "927523134440",
+            appId: "1:927523134440:web:4a546e6c565368e283e25d",
+            measurementId: "G-BCPK0YX0E3"
+        };
+
+        // 고유한 앱 ID 설정 (문서 경로용)
+        const appId = firebaseConfig.projectId;
+        
+        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
@@ -75,9 +89,9 @@
                 width: 4, 
                 showChat: true, 
                 msg: '', 
-                tool: 'pencil' // 'pencil' or 'text'
+                tool: 'pencil'
             });
-            const [textInput, setTextInput] = useState({ active: false, x: 0, y: 0, value: '' });
+            const [textInput, setTextInput] = useState({ active: false, x: 0, y: 0, rawX: 0, rawY: 0, value: '' });
 
             const canvasRef = useRef(null);
             const containerRef = useRef(null);
@@ -87,19 +101,26 @@
             // 1. Auth Initialization
             useEffect(() => {
                 const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
+                    try {
+                        // 시스템에서 제공하는 토큰이 있으면 사용, 없으면 익명 로그인
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (err) {
+                        console.error("Auth failed:", err);
                     }
                 };
                 initAuth();
                 const unsubscribe = onAuthStateChanged(auth, (u) => {
-                    setUser(u);
-                    const savedName = localStorage.getItem(`eboard_nick_${appId}`);
-                    if (savedName) {
-                        setNickname(savedName);
-                        setIsLoggedIn(true);
+                    if (u) {
+                        setUser(u);
+                        const savedName = localStorage.getItem(`eboard_nick_${appId}`);
+                        if (savedName) {
+                            setNickname(savedName);
+                            setIsLoggedIn(true);
+                        }
                     }
                 });
                 return () => unsubscribe();
@@ -113,25 +134,25 @@
                 const unsubStrokes = onSnapshot(
                     query(collection(db, ...base, 'strokes'), orderBy('timestamp', 'asc')),
                     s => setData(p => ({ ...p, strokes: s.docs.map(d => ({ id: d.id, ...d.data() })) })),
-                    e => console.error(e)
+                    e => console.error("Strokes error:", e)
                 );
 
                 const unsubTexts = onSnapshot(
                     query(collection(db, ...base, 'texts'), orderBy('timestamp', 'asc')),
                     s => setData(p => ({ ...p, texts: s.docs.map(d => ({ id: d.id, ...d.data() })) })),
-                    e => console.error(e)
+                    e => console.error("Texts error:", e)
                 );
 
                 const unsubMessages = onSnapshot(
                     query(collection(db, ...base, 'messages'), orderBy('timestamp', 'asc')),
                     s => setData(p => ({ ...p, messages: s.docs.map(d => ({ id: d.id, ...d.data() })) })),
-                    e => console.error(e)
+                    e => console.error("Messages error:", e)
                 );
 
                 const unsubUsers = onSnapshot(
                     collection(db, ...base, 'users'),
                     s => setData(p => ({ ...p, users: s.docs.map(d => ({ id: d.id, ...d.data() })) })),
-                    e => console.error(e)
+                    e => console.error("Users error:", e)
                 );
 
                 return () => { unsubStrokes(); unsubTexts(); unsubMessages(); unsubUsers(); };
@@ -264,7 +285,7 @@
                     userName: nickname,
                     timestamp: serverTimestamp()
                 };
-                setTextInput({ active: false, x: 0, y: 0, value: '' });
+                setTextInput({ active: false, x: 0, y: 0, rawX: 0, rawY: 0, value: '' });
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'texts'), newText);
             };
 
@@ -300,7 +321,6 @@
             };
 
             const undoLast = async () => {
-                // Find latest item (stroke or text) by user on this page
                 const myStrokes = data.strokes.filter(s => s.userId === user.uid && (s.page || 1) === currentPage);
                 const myTexts = data.texts.filter(t => t.userId === user.uid && (t.page || 1) === currentPage);
                 
@@ -348,7 +368,7 @@
                             <span className="font-black tracking-tighter text-xl bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-cyan-400">BOARD.</span>
                             <div className="hidden md:flex items-center gap-2 text-xs text-gray-400 bg-gray-900 px-3 py-1 rounded-full border border-gray-800">
                                 <Icons.Users />
-                                <span>{data.users.length}명</span>
+                                <span>{data.users.length}명 참여중</span>
                             </div>
                         </div>
                         
@@ -443,10 +463,10 @@
                             </div>
                             <div className="flex-1 overflow-y-auto p-4 space-y-4">
                                 {data.messages.map((m, i) => (
-                                    <div key={m.id || i} className={`flex flex-col ${m.userId === user.uid ? 'items-end' : 'items-start'}`}>
+                                    <div key={m.id || i} className={`flex flex-col ${m.userId === user?.uid ? 'items-end' : 'items-start'}`}>
                                         <span className="text-[10px] text-gray-500 mb-1 px-1 font-mono uppercase">{m.userName}</span>
                                         <div className={`max-w-[90%] px-3 py-2 text-sm rounded-2xl ${
-                                            m.userId === user.uid ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-gray-800 text-gray-200 rounded-tl-none border border-gray-700'
+                                            m.userId === user?.uid ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-gray-800 text-gray-200 rounded-tl-none border border-gray-700'
                                         }`}>
                                             {m.text}
                                         </div>
