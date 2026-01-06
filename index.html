@@ -37,8 +37,7 @@
         import { 
             getAuth, 
             signInAnonymously, 
-            onAuthStateChanged, 
-            signInWithCustomToken 
+            onAuthStateChanged
         } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { 
             getFirestore, 
@@ -104,6 +103,24 @@
         // --- REACT COMPONENTS ---
         const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
+        // Helper: Convert URLs to clickable links
+        const Linkify = ({ text }) => {
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const parts = text.split(urlRegex);
+            return (
+                <>
+                    {parts.map((part, i) => 
+                        // Improved check: starts with http/https
+                        /^https?:\/\//.test(part) ? (
+                            <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-purple-300 underline hover:text-purple-200 break-all">{part}</a>
+                        ) : (
+                            <span key={i}>{part}</span>
+                        )
+                    )}
+                </>
+            );
+        };
+
         const InstructorDashboard = ({ messages, strokes, allUsers, onBack }) => {
             const questions = useMemo(() => messages.filter(m => m.text.includes('?')), [messages]);
             const participation = useMemo(() => {
@@ -167,7 +184,7 @@
                                                     {msg.timestamp?.seconds ? new Date(msg.timestamp.seconds*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : ''}
                                                 </span>
                                             </div>
-                                            <p className="text-gray-200">{msg.text}</p>
+                                            <p className="text-gray-200"><Linkify text={msg.text} /></p>
                                         </div>
                                     ))}
                                 </div>
@@ -192,27 +209,68 @@
             const containerRef = useRef(null);
             const drawing = useRef({ isDrawing: false, points: [] });
 
+            // --- AUTHENTICATION FLOW WITH DIAGNOSTICS ---
             useEffect(() => {
                 const authFlow = async () => {
-                    await signInAnonymously(auth);
+                    try {
+                        console.log("Firebase Auth: 익명 로그인 시도 중...");
+                        await signInAnonymously(auth);
+                        console.log("Firebase Auth: 익명 로그인 성공!");
+                    } catch (error) {
+                        console.error("Firebase Auth Error:", error);
+                        let msg = "인증 오류가 발생했습니다.\n\n";
+                        if (error.code === 'auth/operation-not-allowed') {
+                            msg += "원인: Firebase 콘솔에서 '익명(Anonymous)' 로그인이 활성화되지 않았습니다.\n해결: Authentication -> Sign-in method 탭에서 익명 공급업체를 켜주세요.";
+                        } else if (error.code === 'auth/network-request-failed') {
+                            msg += "원인: 네트워크 연결에 문제가 있습니다.\n해결: 인터넷 연결을 확인하거나 방화벽 설정을 확인하세요.";
+                        } else {
+                            msg += `에러 메시지: ${error.message}`;
+                        }
+                        alert(msg);
+                    }
                 };
+                
                 authFlow();
+                
                 return onAuthStateChanged(auth, u => {
-                    setUser(u);
-                    const saved = localStorage.getItem(`eboard_user_${APP_CONTEXT}`);
-                    if (saved) { setDisplayName(saved); setIsGateOpen(false); }
+                    if (u) {
+                        setUser(u);
+                        console.log("User Logged In:", u.uid);
+                        const saved = localStorage.getItem(`eboard_user_${APP_CONTEXT}`);
+                        if (saved) { setDisplayName(saved); setIsGateOpen(false); }
+                    } else {
+                        console.log("User Logged Out");
+                    }
                 });
             }, []);
 
             // Data Sync - Get All Data (filtering happens in memory due to Query constraints)
             useEffect(() => {
                 if (!user) return;
-                const subs = [
-                    onSnapshot(query(collection(db, ...DATA_ROOT, COLS.STROKES), orderBy('timestamp', 'asc')), s => setData(p => ({...p, strokes: s.docs.map(d => ({id: d.id, ...d.data()}))}))),
-                    onSnapshot(query(collection(db, ...DATA_ROOT, COLS.MESSAGES), orderBy('timestamp', 'asc')), s => setData(p => ({...p, messages: s.docs.map(d => ({id:d.id, ...d.data()}))}))),
-                    onSnapshot(query(collection(db, ...DATA_ROOT, COLS.USERS), orderBy('joinedAt', 'desc')), s => setData(p => ({...p, users: s.docs.map(d => ({id:d.id, ...d.data()}))})))
-                ];
-                return () => subs.forEach(unsub => unsub());
+                console.log("Setting up Firestore Listeners for user:", user.uid);
+                
+                // Strokes Listener with Error Handling
+                const unsubStrokes = onSnapshot(
+                    query(collection(db, ...DATA_ROOT, COLS.STROKES), orderBy('timestamp', 'asc')), 
+                    s => setData(p => ({...p, strokes: s.docs.map(d => ({id: d.id, ...d.data()}))})),
+                    e => console.error("Firestore Strokes Error:", e)
+                );
+
+                // Messages Listener with Error Handling
+                const unsubMessages = onSnapshot(
+                    query(collection(db, ...DATA_ROOT, COLS.MESSAGES), orderBy('timestamp', 'asc')), 
+                    s => setData(p => ({...p, messages: s.docs.map(d => ({id:d.id, ...d.data()}))})),
+                    e => console.error("Firestore Messages Error:", e)
+                );
+
+                // Users Listener with Error Handling
+                const unsubUsers = onSnapshot(
+                    query(collection(db, ...DATA_ROOT, COLS.USERS), orderBy('joinedAt', 'desc')), 
+                    s => setData(p => ({...p, users: s.docs.map(d => ({id:d.id, ...d.data()}))})),
+                    e => console.error("Firestore Users Error:", e)
+                );
+
+                return () => { unsubStrokes(); unsubMessages(); unsubUsers(); };
             }, [user]);
 
             const redraw = useCallback(() => {
@@ -431,7 +489,9 @@
                                 {data.messages.map(msg => (
                                     <div key={msg.id} className={`flex flex-col ${msg.userId === user?.uid ? 'items-end' : 'items-start'}`}>
                                         <span className="text-[10px] text-gray-400 mb-1 px-1">{msg.userName}</span>
-                                        <div className={`max-w-[85%] px-3 py-2 text-sm rounded-2xl ${msg.userId === user?.uid ? 'bg-purple-600 text-white rounded-br-none' : 'bg-gray-700 text-gray-200 rounded-bl-none'}`}>{msg.text}</div>
+                                        <div className={`max-w-[85%] px-3 py-2 text-sm rounded-2xl ${msg.userId === user?.uid ? 'bg-purple-600 text-white rounded-br-none' : 'bg-gray-700 text-gray-200 rounded-bl-none'}`}>
+                                            <Linkify text={msg.text} />
+                                        </div>
                                     </div>
                                 ))}
                             </div>
