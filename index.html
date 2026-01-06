@@ -42,11 +42,11 @@
     <script type="text/babel" data-type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, writeBatch, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, writeBatch, onSnapshot, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const { useState, useEffect, useRef, useCallback } = React;
 
-        // --- Firebase Configuration (User Provided) ---
+        // --- Firebase Configuration ---
         const firebaseConfig = {
             apiKey: "AIzaSyDK2VURk2eqaRy52yi2sPZuwYVb2ymmR3I",
             authDomain: "eboard-95055.firebaseapp.com",
@@ -58,15 +58,13 @@
             measurementId: "G-BCPK0YX0E3"
         };
 
-        // 고유한 앱 ID 설정 (문서 경로용)
-        const appId = firebaseConfig.projectId;
+        // Rule 1: Use provided appId or fallback
+        const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId;
         
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // --- Icons ---
         const Icons = {
             Pencil: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>,
             Text: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M12 6v14m-5 0h10" /></svg>,
@@ -98,11 +96,10 @@
             const drawing = useRef({ isDrawing: false, points: [] });
             const textRef = useRef(null);
 
-            // 1. Auth Initialization
+            // 1. Auth Initialization (Rule 3)
             useEffect(() => {
                 const initAuth = async () => {
                     try {
-                        // 시스템에서 제공하는 토큰이 있으면 사용, 없으면 익명 로그인
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
@@ -114,38 +111,54 @@
                 };
                 initAuth();
                 const unsubscribe = onAuthStateChanged(auth, (u) => {
-                    if (u) {
-                        setUser(u);
-                        const savedName = localStorage.getItem(`eboard_nick_${appId}`);
-                        if (savedName) {
-                            setNickname(savedName);
-                            setIsLoggedIn(true);
-                        }
+                    setUser(u);
+                    const savedName = localStorage.getItem(`eboard_nick_${appId}`);
+                    if (savedName) {
+                        setNickname(savedName);
+                        setIsLoggedIn(true);
                     }
                 });
                 return () => unsubscribe();
             }, []);
 
-            // 2. Data Sync
+            // Helper to sort data by timestamp in memory
+            const sortByTime = (items) => {
+                return items.sort((a, b) => {
+                    const timeA = a.timestamp?.toMillis() || 0;
+                    const timeB = b.timestamp?.toMillis() || 0;
+                    return timeA - timeB;
+                });
+            };
+
+            // 2. Data Sync (Rule 2: No orderBy in queries)
             useEffect(() => {
                 if (!user) return;
                 const base = ['artifacts', appId, 'public', 'data'];
                 
                 const unsubStrokes = onSnapshot(
-                    query(collection(db, ...base, 'strokes'), orderBy('timestamp', 'asc')),
-                    s => setData(p => ({ ...p, strokes: s.docs.map(d => ({ id: d.id, ...d.data() })) })),
+                    collection(db, ...base, 'strokes'),
+                    s => {
+                        const docs = s.docs.map(d => ({ id: d.id, ...d.data() }));
+                        setData(p => ({ ...p, strokes: sortByTime(docs) }));
+                    },
                     e => console.error("Strokes error:", e)
                 );
 
                 const unsubTexts = onSnapshot(
-                    query(collection(db, ...base, 'texts'), orderBy('timestamp', 'asc')),
-                    s => setData(p => ({ ...p, texts: s.docs.map(d => ({ id: d.id, ...d.data() })) })),
+                    collection(db, ...base, 'texts'),
+                    s => {
+                        const docs = s.docs.map(d => ({ id: d.id, ...d.data() }));
+                        setData(p => ({ ...p, texts: sortByTime(docs) }));
+                    },
                     e => console.error("Texts error:", e)
                 );
 
                 const unsubMessages = onSnapshot(
-                    query(collection(db, ...base, 'messages'), orderBy('timestamp', 'asc')),
-                    s => setData(p => ({ ...p, messages: s.docs.map(d => ({ id: d.id, ...d.data() })) })),
+                    collection(db, ...base, 'messages'),
+                    s => {
+                        const docs = s.docs.map(d => ({ id: d.id, ...d.data() }));
+                        setData(p => ({ ...p, messages: sortByTime(docs) }));
+                    },
                     e => console.error("Messages error:", e)
                 );
 
@@ -208,7 +221,6 @@
                 return () => window.removeEventListener('resize', handleResize);
             }, [redraw]);
 
-            // 5. Interaction Handlers
             const getPos = (e) => {
                 const rect = canvasRef.current.getBoundingClientRect();
                 const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -224,12 +236,10 @@
             const drawStart = (e) => {
                 if (!isLoggedIn) return;
                 const pos = getPos(e);
-
                 if (ui.tool === 'text') {
                     setTextInput({ active: true, x: pos.x, y: pos.y, rawX: pos.rawX, rawY: pos.rawY, value: '' });
                     return;
                 }
-
                 drawing.current.isDrawing = true;
                 drawing.current.points = [{ x: pos.x, y: pos.y }];
             };
@@ -238,13 +248,11 @@
                 if (!drawing.current.isDrawing) return;
                 const pos = getPos(e);
                 drawing.current.points.push({ x: pos.x, y: pos.y });
-                
                 const ctx = canvasRef.current.getContext('2d');
                 const last = drawing.current.points[drawing.current.points.length - 2];
                 const dpr = window.devicePixelRatio || 1;
                 const w = canvasRef.current.width / dpr;
                 const h = canvasRef.current.height / dpr;
-
                 ctx.beginPath();
                 ctx.lineCap = 'round'; ctx.lineJoin = 'round';
                 ctx.strokeStyle = ui.color; ctx.lineWidth = ui.width;
@@ -257,7 +265,6 @@
                 if (!drawing.current.isDrawing) return;
                 drawing.current.isDrawing = false;
                 if (drawing.current.points.length < 2) return;
-
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'strokes'), {
                     points: drawing.current.points,
                     color: ui.color,
@@ -289,15 +296,16 @@
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'texts'), newText);
             };
 
-            // 6. Action Handlers
             const handleJoin = async (e) => {
                 e.preventDefault();
                 if (!nickname.trim()) return;
                 setIsLoggedIn(true);
                 localStorage.setItem(`eboard_nick_${appId}`, nickname);
-                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), {
-                    name: nickname, uid: user.uid, lastSeen: serverTimestamp()
-                });
+                if (user) {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), {
+                        name: nickname, uid: user.uid, lastSeen: serverTimestamp()
+                    });
+                }
             };
 
             const sendMessage = async (e) => {
@@ -311,7 +319,7 @@
             };
 
             const clearPage = async () => {
-                if (!confirm(`페이지 ${currentPage}의 모든 드로잉과 텍스트를 지울까요?`)) return;
+                if (!confirm(`페이지 ${currentPage}의 내용을 모두 지울까요?`)) return;
                 const batch = writeBatch(db);
                 data.strokes.filter(s => (s.page || 1) === currentPage)
                     .forEach(s => batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'strokes', s.id)));
@@ -321,8 +329,8 @@
             };
 
             const undoLast = async () => {
-                const myStrokes = data.strokes.filter(s => s.userId === user.uid && (s.page || 1) === currentPage);
-                const myTexts = data.texts.filter(t => t.userId === user.uid && (t.page || 1) === currentPage);
+                const myStrokes = data.strokes.filter(s => s.userId === user?.uid && (s.page || 1) === currentPage);
+                const myTexts = data.texts.filter(t => t.userId === user?.uid && (t.page || 1) === currentPage);
                 
                 const lastStroke = myStrokes[myStrokes.length - 1];
                 const lastText = myTexts[myTexts.length - 1];
@@ -396,7 +404,6 @@
                                 className="block"
                             />
 
-                            {/* Text Input Overlay */}
                             {textInput.active && (
                                 <input
                                     ref={textRef}
@@ -417,7 +424,6 @@
                                 />
                             )}
                             
-                            {/* Floating Toolbar */}
                             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 glass-panel border border-gray-700 px-6 py-3 rounded-3xl flex items-center gap-6 shadow-2xl">
                                 <div className="flex gap-2 p-1 bg-gray-900/50 rounded-xl">
                                     <button 
